@@ -20,7 +20,6 @@ async def extract_features(trainInfoFile: UploadFile = File(...),
         trainSeqFile: UploadFile = File(...)):
     # 指定保存目录
     save_dir = "C:\\Users\\fs201\\Downloads\\RegVAR\\data\\raw"
-
     # 确保目录存在
     os.makedirs(save_dir, exist_ok=True)
 
