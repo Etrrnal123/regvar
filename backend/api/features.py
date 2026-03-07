@@ -1,8 +1,10 @@
+import os
+import shutil
 import time
 
 import pandas as pd
 from fastapi import APIRouter, UploadFile, File
-
+from starlette.responses import JSONResponse
 
 from backend.services.dna_umap import dnaumap
 from backend.services.feature_runner import (
@@ -16,10 +18,39 @@ router = APIRouter(prefix="/api/features")
 @router.post("/extract")
 async def extract_features(trainInfoFile: UploadFile = File(...),
         trainSeqFile: UploadFile = File(...)):
-    text = await trainInfoFile.read()
+    # 指定保存目录
+    save_dir = "C:\\Users\\fs201\\Downloads\\RegVAR\\data\\raw"
 
-    run_dna_features()
-    return {"success":True}
+    # 确保目录存在
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 构建文件保存路径
+    trainInfo_path = os.path.join(save_dir, trainInfoFile.filename)
+    trainSeq_path = os.path.join(save_dir, trainSeqFile.filename)
+
+    try:
+        # 保存 trainInfoFile
+        with open(trainInfo_path, "wb") as buffer:
+            shutil.copyfileobj(trainInfoFile.file, buffer)
+
+        # 保存 trainSeqFile
+        with open(trainSeq_path, "wb") as buffer:
+            shutil.copyfileobj(trainSeqFile.file, buffer)
+
+        # 调用处理函数
+        run_dna_features()
+
+        return {"success": True, "message": "文件保存成功"}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
+    finally:
+        # 关闭文件流
+        await trainInfoFile.close()
+        await trainSeqFile.close()
 
 @router.get("/alphagenome/index/{index}")
 def generate_alphagenome(index: int):
