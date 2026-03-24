@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/features")
 async def extract_features(trainInfoFile: UploadFile = File(...),
         trainSeqFile: UploadFile = File(...)):
     # 指定保存目录
-    save_dir = "C:\\Users\\fs201\\Downloads\\RegVAR\\data\\raw"
+    save_dir = "C:\\Users\\fs201\\Downloads\\RegVAR\\backend\\data\\raw"
     # 确保目录存在
     os.makedirs(save_dir, exist_ok=True)
 
@@ -29,6 +29,7 @@ async def extract_features(trainInfoFile: UploadFile = File(...),
 
     try:
         # 保存 trainInfoFile
+        trainInfoFile.file.seek(0)
         with open(trainInfo_path, "wb") as buffer:
             shutil.copyfileobj(trainInfoFile.file, buffer)
 
