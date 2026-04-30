@@ -30,5 +30,5 @@
     "omics_epochs": 200,
     "omics_batch_size": 64,
     "eval_only": true,
-    "checkpoint": "./output/best_model_fold1.pth"
+    "checkpoint": "./output/best_model_fold5.pth"
 }

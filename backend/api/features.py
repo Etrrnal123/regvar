@@ -72,7 +72,7 @@ def generate_alphagenome(index: int):
 def generate_dna():
     try:
         time.sleep(1)
-        # dnaumap()
+        dnaumap()
     except Exception as e:
         return {"success": False, "error": str(e)}
 

@@ -12,7 +12,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve, auc
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, Subset
 
 # 使用绝对导入而不是相对导入
@@ -32,6 +33,47 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+def plot_metrics(y_true, y_probs, fold_idx, output_dir):
+    """
+    [新增函数] 绘制并保存 ROC 曲线和 PR 曲线
+    """
+    # 计算 ROC 曲线数据
+    fpr, tpr, _ = roc_curve(y_true, y_probs)
+    roc_auc = auc(fpr, tpr)
+
+    # 计算 PR 曲线数据
+    precision, recall, _ = precision_recall_curve(y_true, y_probs)
+    pr_auc = average_precision_score(y_true, y_probs)
+
+    # 创建画布
+    plt.figure(figsize=(12, 5))
+
+    # 1. 绘制 ROC 曲线
+    plt.subplot(1, 2, 1)
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.4f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(f'ROC Curve - Fold {fold_idx}')
+    plt.legend(loc="lower right")
+    plt.grid(alpha=0.3)
+
+    # 2. 绘制 PR 曲线
+    plt.subplot(1, 2, 2)
+    plt.plot(recall, precision, color='blue', lw=2, label=f'PR curve (AUPR = {pr_auc:.4f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title(f'Precision-Recall Curve - Fold {fold_idx}')
+    plt.legend(loc="lower left")
+    plt.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plot_path = os.path.join(output_dir, f'fold{fold_idx}_metrics.png')
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    print(f"  [Plot] Saved metrics plot to {plot_path}")
 
 def train_one_epoch(model, loader, optimizer, scheduler, device):
     model.train()
@@ -39,7 +81,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
     criterion = nn.BCEWithLogitsLoss()
     batch_count = 0
     total_batches = len(loader)
-    
+
     for batch in loader:
         batch_count += 1
         xb = batch['sequence_features'].to(device)
@@ -52,17 +94,17 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
         loss = criterion(logits, yb)
         loss.backward()
         optimizer.step()
-        
+
         # 更新学习率
         if scheduler is not None:
             scheduler.step()
-            
+
         total_loss += loss.item() * xb.size(0)
-        
+
         # 添加进度信息
         if batch_count % 50 == 0 or batch_count == total_batches:
             print(f"  Processed {batch_count}/{total_batches} batches ({100*batch_count/total_batches:.1f}%)")
-            
+
     return total_loss / len(loader.dataset)
 
 
@@ -72,7 +114,7 @@ def eval_model(model, loader, device):
     probs_all, labels_all, vids_all = [], [], []
     batch_count = 0
     total_batches = len(loader)
-    
+
     for batch in loader:
         batch_count += 1
         xb = batch['sequence_features'].to(device)
@@ -86,23 +128,23 @@ def eval_model(model, loader, device):
         probs_all.append(probs.cpu())
         labels_all.append(yb.cpu())
         vids_all.extend(vids)
-        
+
         # 添加进度信息
         if batch_count % 50 == 0 or batch_count == total_batches:
             print(f"  Evaluated {batch_count}/{total_batches} batches ({100*batch_count/total_batches:.1f}%)")
-    
+
     # 合并所有结果
     p = torch.cat(probs_all).numpy()
     y = torch.cat(labels_all).numpy()
-    
+
     # 打印概率标准差进行自检
     probs_std = torch.cat(probs_all).std().item()
     print(f"[Eval] probs std: {probs_std:.6f}")
-    
+
     # 计算评估指标
     auc = roc_auc_score(y, p) if len(set(y)) == 2 else float("nan")
     aupr = average_precision_score(y, p)
-                
+
     return y, p, vids_all
 
 def save_results(vids, labels, scores, output_path):
@@ -127,7 +169,7 @@ def save_results(vids, labels, scores, output_path):
             pos.append(0)
             refs.append('N')
             alts.append('N')
-            
+
     df = pd.DataFrame({
         'Chr': chrs,
         'Pos': pos,
@@ -227,7 +269,7 @@ def main(config_path, merge_oof_only: bool = False):
 
     # 设置设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     # 确保输出目录存在
     os.makedirs(config.get('output_dir', './output'), exist_ok=True)
     os.makedirs(config.get('fea_dir', './data/fea'), exist_ok=True)
@@ -287,7 +329,7 @@ def main(config_path, merge_oof_only: bool = False):
             print("AlphaGenome features not found and no API key provided; proceeding without precompute.")
     else:
         print("Using precomputed AlphaGenome features")
-    
+
     # 预计算 PCAWG 特征（固定使用，Linux/跨平台，现在用 Python 直接生成）
     pcawg_features_file = os.path.join(pcawg_dir, 'pcawg_features.npy')
     if not config.get('use_omics_encoder', False):
@@ -326,10 +368,10 @@ def main(config_path, merge_oof_only: bool = False):
                 print("Encoding omics embeddings from pretrained SAINT checkpoint...")
                 import subprocess
                 import sys
-                
+
                 # 确保输出目录存在
                 os.makedirs(omics_subdir, exist_ok=True)
-                
+
                 # 构建命令行参数
                 # 注意：saint_pretrain.py 已经修改为根据 fea_tag 自动构建输出路径 data/fea/Omics/{tag}
                 # 所以我们只需要传入 output_dir=config['fea_dir'] 和 fea_tag=omics_tag
@@ -346,7 +388,7 @@ def main(config_path, merge_oof_only: bool = False):
                 ], check=True)
             else:
                 raise FileNotFoundError(f"Missing SAINT checkpoint at {saint_ckpt}; please provide the pretrained model.")
-        
+
         if os.path.exists(omics_emb_path):
             print(f"Using omics embeddings: {omics_emb_path}")
         else:
@@ -437,10 +479,13 @@ def main(config_path, merge_oof_only: bool = False):
         regvar_model.load_state_dict(torch.load(ckpt, map_location=device))
         print(f"[Eval] loaded checkpoint: {ckpt}")
         ys, yps, vids = eval_model(regvar_model, eval_loader, device)
-        auc = roc_auc_score(ys, yps) if len(set(ys)) == 2 else float("nan")
-        aupr = average_precision_score(ys, yps)
-        print(f"[Eval] AUC: {auc:.4f}, AUPR: {aupr:.4f}")
-        
+        auc_val = roc_auc_score(ys, yps) if len(set(ys)) == 2 else float("nan")
+        aupr_val = average_precision_score(ys, yps)
+        print(f"[Eval] AUC: {auc_val:.4f}, AUPR: {aupr_val:.4f}")
+
+        # --- [新增] 评估模式下的绘图调用 ---
+        plot_metrics(ys, yps, "Eval", config.get('output_dir', './output'))
+
         # Save results
         out_file = os.path.join(config.get('output_dir', './output'), 'eval_results.tsv')
         save_results(vids, ys, yps, out_file)
@@ -505,7 +550,7 @@ def main(config_path, merge_oof_only: bool = False):
         pcawg_npy=pcawg_path,
         filter_zero_nt=True
     )
-    
+
     # 现在是过滤后的长度，不是原始长度
     N = len(full_dataset)
     # 直接用数据集里已对齐/已过滤后的标签
@@ -516,7 +561,7 @@ def main(config_path, merge_oof_only: bool = False):
 
     # K折交叉验证
     kfold = StratifiedKFold(n_splits=config.get('k_folds', 5), shuffle=True, random_state=config.get('seed', 42))
-    
+
     for fold, (train_idx, val_idx) in enumerate(kfold.split(np.arange(N), y_for_split)):
         print(f"Training fold {fold + 1}")
 
@@ -540,7 +585,7 @@ def main(config_path, merge_oof_only: bool = False):
             attn_temperature=float(config.get('attn_temperature', 1.0)),
             fusion_mode=str(config.get('fusion_mode', 'attention'))
         ).to(device)
-        
+
         # 优化器（固定包含所有三个模态的参数）
         optimizer_params = [
             {"params": regvar_model.fusion.parameters()},
@@ -550,24 +595,24 @@ def main(config_path, merge_oof_only: bool = False):
             {"params": regvar_model.pcawg_proj.parameters()},
             {"params": regvar_model.attention_mlp.parameters()}
         ]
-        
+
         optimizer = optim.Adam(optimizer_params, lr=config.get('lr', 1e-4), weight_decay=1e-4)
-        
+
         # 学习率调度器
         total_steps = len(train_loader) * config.get('epochs', 10)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
-        
+
         # 早停机制参数
         patience = 5
         best_val_auc = 0.0
         counter = 0
         best_model_state = None
-        
+
         epochs = config.get('epochs', 30)
         if epochs < 30:
              print(f"Increasing epochs from {epochs} to 30 for better convergence.")
              epochs = 30
-        
+
         # 训练
         for epoch in range(epochs):
             print(f"Fold {fold + 1}, Epoch {epoch + 1}")
@@ -575,13 +620,13 @@ def main(config_path, merge_oof_only: bool = False):
             print(f"  Learning rate: {current_lr:.6f}")
             train_loss = train_one_epoch(regvar_model, train_loader, optimizer, scheduler, device)
             print(f"  Train Loss: {train_loss:.4f}")
-            
+
             # 评估
             ys, yps, vids = eval_model(regvar_model, val_loader, device)
             val_auc = roc_auc_score(ys, yps)
             val_aupr = average_precision_score(ys, yps)
             print(f"  Val AUC: {val_auc:.4f}, Val AUPR: {val_aupr:.4f}")
-            
+
             if val_auc > best_val_auc:
                 best_val_auc = val_auc
                 counter = 0
@@ -596,17 +641,20 @@ def main(config_path, merge_oof_only: bool = False):
                 if counter >= patience:
                     print(f"Early stopping at epoch {epoch+1}")
                     break
-            
+
         # 使用最佳模型进行最终评估
         regvar_model.load_state_dict(torch.load(os.path.join(config['output_dir'], f'best_model_fold{fold+1}.pth')))
         ys, yps, vids = eval_model(regvar_model, val_loader, device)
-        auc = roc_auc_score(ys, yps)
-        aupr = average_precision_score(ys, yps)
+        auc_score = roc_auc_score(ys, yps)
+        aupr_score = average_precision_score(ys, yps)
 
-        auc_scores.append(auc)
-        aupr_scores.append(aupr)
+        # --- [新增] 每个 Fold 结束后的绘图调用 ---
+        plot_metrics(ys, yps, fold + 1, config['output_dir'])
 
-        print(f"Fold {fold + 1} - AUC: {auc:.4f}, AUPR: {aupr:.4f}")
+        auc_scores.append(auc_score)
+        aupr_scores.append(aupr_score)
+
+        print(f"Fold {fold + 1} - AUC: {auc_score:.4f}, AUPR: {aupr_score:.4f}")
 
     # 输出最终结果
     print(f"Mean AUC: {np.mean(auc_scores):.4f} ± {np.std(auc_scores):.4f}")
