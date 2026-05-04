@@ -1,3 +1,6 @@
+import csv
+import io
+import os
 from datetime import datetime
 from tkinter.constants import INSERT
 from typing import Dict
@@ -6,6 +9,8 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 import pymysql
+from starlette.responses import StreamingResponse
+
 from backend.db import db
 router = APIRouter(prefix="/api")
 
@@ -241,3 +246,32 @@ def get_project_results(projectId: str):
         "results": results
     }
     return final_result
+
+
+@router.get("/projects/results/download")
+def get_project_results():
+    cursor = get_cursor()
+    cursor.execute('select id from currentproject')
+    result = cursor.fetchone()
+    projectId = result['id']
+    cursor.execute('SELECT result FROM projects WHERE id = %s ', (projectId, ))
+    project_result = cursor.fetchone()
+    path = project_result['result']  # 假设这里存的是 D:/output/result.tsv
+
+    # 检查文件是否存在
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"File not found at {path}")
+
+    # 方案：直接以二进制流读取文件并返回
+    # 这样不需要经过 csv.reader 转换，速度最快且不会有编码错误
+    def iterfile():
+        with open(path, mode="rb") as file_like:
+            yield from file_like
+
+    return StreamingResponse(
+        iterfile(),
+        media_type="text/tab-separated-values",
+        headers={
+            "Content-Disposition": f"attachment; filename=results_{projectId}.tsv"
+        }
+    )
